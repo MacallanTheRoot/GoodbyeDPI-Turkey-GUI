@@ -1,53 +1,60 @@
-# GoodbyeDPI-Turkey GUI
+# GoodbyeDPI-Turkey GUI 🛡️
 
-Bu proje, Türkiye'deki internet kısıtlamalarını ve DPI (Deep Packet Inspection) engellemelerini aşmak için kullanılan araçlar için **herkesin kullanabileceği kadar basit**, modern bir arayüzdür.
+A modern, user-friendly, and secure interface for GoodbyeDPI, tailored for Turkey's network conditions.
+**Developed by [MacallanTheRoot](https://github.com/MacallanTheRoot)**
 
-**Amacımız:** Teknik bilgisi olmayan, komut satırlarıyla yada karmaşık ayarlarla uğraşmak istemeyen kullanıcıların tek bir tuşla özgür internete erişmesini sağlamaktır.
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)
+![Version](https://img.shields.io/badge/version-1.0.0-green.svg)
 
-![Ekran Görüntüsü](https://i.imgur.com/example.png)
+## 🌟 Features
 
-## Özellikler
+- **Modern UI**: Sleek, dark-themed interface built with `customtkinter`.
+- **One-Click Privacy**: Activate reliable DPI circumvention with a single button.
+- **Smart Persistence**: Remembers your preferred DNS provider and startup settings automatically.
+- **System Tray Support**: Minimizes to tray to run silently in the background.
+- **Secure Process Management**: Uses Windows Job Objects to ensure no background processes are left alive if the app closes.
+- **DNS Options**: Pre-configured with popular, fast, and secure DNS providers:
+  - Turkey DNSRedir (Recommended)
+  - Yandex, Google, Cloudflare, OpenDNS
 
--   **Tek Tıkla Erişim:** "ACTIVATE" butonuna basarak servisi başlatın.
--   **Kullanıcı Dostu Arayüz:** Karmaşık ayarlar yok, her şey anlaşılır ve basit.
--   **Otomatik Başlatma:** İsterseniz bilgisayarınız açıldığında otomatik olarak başlar ve kendini gizler. (Görev Yöneticisi Başlangıç sekmesinde "GoodbyeDPI-Turkey GUI" olarak görünür)
--   **Sistem Tepsisine Küçülme:** Uygulamayı kapattığınızda kapanmaz, saatin yanına gizlenir ve arka planda çalışmaya devam eder.
--   **DNS Seçenekleri:** Türkiye için özel ayarlanmış modun yanı sıra Google, Cloudflare gibi popüler DNS servislerini de seçebilirsiniz.
+## 🚀 Installation & Usage
 
-## Teşekkür ve Kaynaklar
+### Option 1: Standalone EXE (Recommended)
+1. Download the latest `GoodbyeDPI-Turkey.exe` from releases.
+2. Double-click to run. (Requires Administrator privileges to modify network settings).
+3. Select your DNS provider and click **ACTIVATE**.
 
-Bu proje geliştirilirken, Türkiye'deki kısıtlamalar için en güncel ayarları sağlayan **[cagritaskn/GoodbyeDPI-Turkey](https://github.com/cagritaskn/GoodbyeDPI-Turkey)** projesinden ve kaynaklarından faydalanılmıştır. Bu değerli çalışma için teşekkür ederiz.
+### Option 2: Run from Source
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/MacallanTheRoot/GoodbyeDPI-Turkey-GUI.git
+   cd GoodbyeDPI-Turkey-GUI
+   ```
+2. Create settings environment and install dependencies:
+   ```bash
+   python -m venv venv
+   .\venv\Scripts\activate
+   pip install -r requirements.txt
+   ```
+3. Run the application:
+   ```bash
+   python src/main.py
+   ```
 
-Bu arayüz, arka planda Windows'ta `GoodbyeDPI`, Linux'ta ise `SpoofDPI` araçlarını kullanır.
+## 🛠️ Building (Developer)
 
-## Kurulum ve Kullanım
+To build a standalone `.exe` yourself:
 
-### Hazır Sürüm (Windows .exe)
-1.  `dist` klasöründeki veya Releases kısmındaki `.exe` dosyasını indirin.
-2.  Dosyaya sağ tıklayıp "Yönetici olarak çalıştır" demeniz önerilir (Program bunu otomatik de isteyecektir).
-3.  Açılan ekranda **ACTIVATE** butonuna basın.
-4.  Durum **SECURE** olduğunda işlem tamamdır.
+1. Ensure you have the `venv` setup as above.
+2. Double-click **`build.bat`**.
+3. The executable will be generated in the `dist/` folder.
 
-### Geliştiriciler İçin (Python)
+## 🤝 Credits
 
-Eğer kaynak koddan çalıştırmak isterseniz:
+- **GUI & Logic**: Developed by [MacallanTheRoot](https://github.com/MacallanTheRoot).
+- **Core Engine**: Powered by [cagritaskn/GoodbyeDPI-Turkey](https://github.com/cagritaskn/goodbyedpi-turkey).
 
-1.  Python 3.10+ sürümünü kurun.
-2.  Gerekli kütüphaneleri yükleyin:
-    ```bash
-    pip install -r requirements.txt
-    ```
-3.  Uygulamayı başlatın:
-    ```bash
-    # Yöntem 1: Konsol olmadan (Önerilen)
-    run.cmd
-    
-    # Yöntem 2: Manuel
-    pythonw src/main.py
-    
-    # Yöntem 3: Debug için (konsol ile)
-    python src/main.py
-    ```
+## 📄 License
 
-## Yasal Uyarı
-Bu yazılım sadece internet sansürünü aşmak ve bilgiye erişim özgürlüğü içindir. Yasa dışı amaçlarla kullanılması kullanıcının sorumluluğundadır.
+This project is open source and available under the [MIT License](LICENSE).
