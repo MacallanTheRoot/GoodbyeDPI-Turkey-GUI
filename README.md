@@ -66,7 +66,7 @@ To build a standalone `.exe` yourself:
 ### 🤝 Credits
 
 - **GUI & Logic**: Developed by [MacallanTheRoot](https://github.com/MacallanTheRoot).
-- **Core Engine**: Powered by [cagritaskn/GoodbyeDPI-Turkey](https://github.com/cagritaskn/goodbyedpi-turkey).
+- **Core Engine**: Thanks for [cagritaskn/GoodbyeDPI-Turkey](https://github.com/cagritaskn/goodbyedpi-turkey).
 
 ### 📄 License
 
@@ -132,7 +132,7 @@ Kendi `.exe` dosyanızı oluşturmak için:
 ### 🤝 Emeği Geçenler
 
 - **Arayüz ve Mantık**: [MacallanTheRoot](https://github.com/MacallanTheRoot) tarafından geliştirilmiştir.
-- **Çekirdek Motor**: [cagritaskn/GoodbyeDPI-Turkey](https://github.com/cagritaskn/goodbyedpi-turkey) tarafından desteklenmektedir.
+- **Çekirdek Motor**: [cagritaskn/GoodbyeDPI-Turkey](https://github.com/cagritaskn/goodbyedpi-turkey) teşekkür ederiz.
 
 ### 📄 Lisans
 
