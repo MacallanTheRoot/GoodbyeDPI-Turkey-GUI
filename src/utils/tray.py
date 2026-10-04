@@ -1,5 +1,3 @@
-import pystray
-
 from utils.icon_generator import create_icon
 
 class SystemTrayIcon:
@@ -10,6 +8,17 @@ class SystemTrayIcon:
         self.icon = None
 
     def run(self):
+        import pystray  # Backend discovery can fail on desktops without a tray.
+        if pystray.Icon.__module__ == "pystray._xorg":
+            from Xlib import display
+            connection = display.Display()
+            try:
+                screen = connection.get_default_screen()
+                selection = connection.intern_atom(f"_NET_SYSTEM_TRAY_S{screen}")
+                if not connection.get_selection_owner(selection):
+                    raise RuntimeError("No X11 system tray manager is available")
+            finally:
+                connection.close()
         image = create_icon()
         menu = (
              pystray.MenuItem('Show', self.on_show, default=True),

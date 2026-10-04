@@ -24,6 +24,7 @@ echo Building Executable...
     --name "GoodbyeDPI-Turkey" ^
     --collect-all customtkinter ^
     --hidden-import PIL ^
+    --hidden-import PIL._tkinter_finder ^
     --hidden-import pystray ^
     --add-data "bin;bin" ^
     src/main.py

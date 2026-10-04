@@ -31,7 +31,7 @@ if os.name == 'nt':
                     ('MinimumWorkingSetSize', ctypes.c_size_t),
                     ('MaximumWorkingSetSize', ctypes.c_size_t),
                     ('ActiveProcessLimit', ctypes.c_ulong),
-                    ('Affinity', ctypes.c_ulonglong),
+                    ('Affinity', ctypes.c_size_t),
                     ('PriorityClass', ctypes.c_ulong),
                     ('SchedulingClass', ctypes.c_ulong)]
 
@@ -44,8 +44,7 @@ if os.name == 'nt':
                     ('PeakJobMemoryUsed', ctypes.c_size_t)]
 
 class DNSRunner:
-    def __init__(self, base_path, log_callback=None):
-        self.base_path = base_path
+    def __init__(self, log_callback=None):
         self.process = None
         self.os_type = get_os()
         self.arch = get_arch()
@@ -74,7 +73,16 @@ class DNSRunner:
                 self.output_thread = threading.Thread(
                     target=self._read_output, args=(process,), daemon=True,
                     name="engine-output")
-                self.output_thread.start()
+                try:
+                    self.output_thread.start()
+                except Exception:
+                    self.stop()
+                    raise
+
+    def close(self):
+        """Explicit final cleanup; disable the atexit fallback afterward."""
+        self.stop()
+        atexit.unregister(self.stop)
 
     def stop(self):
         with self._lock:
@@ -85,7 +93,10 @@ class DNSRunner:
             reaped = False
             try:
                 if process.poll() is None:
-                    process.terminate()
+                    try:
+                        process.terminate()
+                    except ProcessLookupError:
+                        pass  # It exited between poll and terminate.
                 try:
                     process.wait(timeout=3)
                 except subprocess.TimeoutExpired:
@@ -113,6 +124,7 @@ class DNSRunner:
     def _close_job_handle(self):
         if self.job_handle:
             try:
+                ctypes.windll.kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
                 ctypes.windll.kernel32.CloseHandle(self.job_handle)
             finally:
                 self.job_handle = None
@@ -132,6 +144,10 @@ class DNSRunner:
     def _assign_job_object(self, processes_handle):
         """Assigns the process to a Job Object that kills it on close"""
         kernel32 = ctypes.windll.kernel32
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
         job = kernel32.CreateJobObjectW(None, None)
         if not job:
             raise OSError("CreateJobObjectW failed")
@@ -193,6 +209,7 @@ class DNSRunner:
             "-dns-addr", dns_addr,
             "-port", "8080", 
              "-enable-doh",
+             "-system-proxy=false",
              "-window-size", "0" 
         ]
         
@@ -205,14 +222,19 @@ class DNSRunner:
 def find_spoof_dpi():
     candidates = [
         shutil.which("spoof-dpi"),
+        shutil.which("spoofdpi"),
         str(Path.home() / ".spoof-dpi/bin/spoof-dpi"),
+        str(Path.home() / "go/bin/spoofdpi"),
         "/usr/local/bin/spoof-dpi",
+        "/usr/local/bin/spoofdpi",
         "/opt/goodbyedpi-turkey/bin/spoof-dpi",
+        "/opt/goodbyedpi-turkey/bin/spoofdpi",
     ]
     for candidate in candidates:
         if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
     raise FileNotFoundError(
-        "SpoofDPI not found. Install a trusted spoof-dpi binary in PATH, "
-        "~/.spoof-dpi/bin, /usr/local/bin, or /opt/goodbyedpi-turkey/bin."
+        "SpoofDPI not found. Build the reviewed v0.12.0 engine with "
+        "'go install github.com/xvzc/SpoofDPI/cmd/spoofdpi@v0.12.0' "
+        "or install a compatible spoof-dpi/spoofdpi binary in PATH."
     )

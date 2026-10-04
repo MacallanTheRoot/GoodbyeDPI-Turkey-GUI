@@ -25,7 +25,9 @@ def _launch_command():
         return sys.executable, "--minimized"
     executable = sys.executable
     if sys.platform == "win32":
-        executable = executable.replace("python.exe", "pythonw.exe")
+        windowless = executable.replace("python.exe", "pythonw.exe")
+        if Path(windowless).exists():
+            executable = windowless
     return executable, f'"{Path(__file__).resolve().parents[1] / "main.py"}" --minimized'
 
 
@@ -47,7 +49,7 @@ def set_enabled(enabled: bool):
         subprocess.run(["powershell", "-NoProfile", "-Command", script], check=True)
     else:
         # The installed launch command is stable even when /opt is read-only.
-        command = "goodbyedpi-turkey" if getattr(sys, "frozen", False) else f'"{executable}" {arguments.split(" --minimized")[0]}'
+        command = "goodbyedpi-turkey" if getattr(sys, "frozen", False) else f'"{executable}" {arguments.removesuffix(" --minimized")}'
         path.write_text(
             "[Desktop Entry]\nType=Application\nName=GoodbyeDPI Turkey\n"
             f"Exec={command} --minimized\nTerminal=false\n"

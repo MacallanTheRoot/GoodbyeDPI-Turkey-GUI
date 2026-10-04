@@ -28,7 +28,7 @@ class App(ctk.CTk):
         super().__init__()
         
         self.title("GoodbyeDPI Turkey")
-        self.geometry("480x650")
+        self.geometry("480x720")
         self.minsize(390, 480)
         
         # Initialize Config
@@ -44,7 +44,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode(self.config_manager.get("theme"))
         ctk.set_default_color_theme("blue")
         
-        self.runner = DNSRunner(os.path.dirname(os.path.abspath(__file__)), self.log_message)
+        self.runner = DNSRunner(log_callback=self.log_message)
         self.is_running = False
         self.tray_icon = None
         self.tray_thread = None
@@ -100,7 +100,7 @@ class App(ctk.CTk):
         self.status_label.pack(side="left", padx=(4, 0))
         self.status_detail = ctk.CTkLabel(protection, text="Protection is off.", font=(FONT, 12),
                                           text_color=COLORS["muted"], anchor="w", justify="left",
-                                          wraplength=390)
+                                          wraplength=350)
         self.status_detail.grid(row=2, column=0, sticky="ew", pady=(0, 16))
         self.primary_button = ctk.CTkButton(
             protection, text="ACTIVATE", height=44, corner_radius=RADIUS["control"],
@@ -133,7 +133,7 @@ class App(ctk.CTk):
         if os.name != "nt":
             ctk.CTkLabel(dns, text="Linux uses a local proxy at 127.0.0.1:8080. Configure your browser to use it.",
                          font=(FONT, 11), text_color=COLORS["muted"], anchor="w",
-                         justify="left", wraplength=390).grid(row=2, column=0, sticky="ew", pady=(10, 0))
+                         justify="left", wraplength=350).grid(row=2, column=0, sticky="ew", pady=(10, 0))
 
         preferences = self._card(content, 3)
         ctk.CTkLabel(preferences, text="Preferences", font=(FONT, 15, "bold"),
@@ -246,7 +246,7 @@ class App(ctk.CTk):
 
     def update_status(self, running):
         if running:
-            self.status_label.configure(text="Protected")
+            self.status_label.configure(text="Protected" if os.name == "nt" else "Proxy running")
             self.status_dot.configure(text_color=COLORS["success"])
             self.status_detail.configure(text="Protection is active." if os.name == "nt" else
                                          "Local proxy active. Use 127.0.0.1:8080 in your browser.")
@@ -285,6 +285,10 @@ class App(ctk.CTk):
                 self.show_window_from_tray()
             elif action == "quit":
                 self.quit_app()
+            elif action == "tray_failed" and not self._shutting_down:
+                self.tray_icon = None
+                self.show_window_from_tray()
+                self.log_textbox.insert("end", f"System tray unavailable: {value}\n")
         if not self._shutting_down:
             self.after(50, self._process_ui_events)
 
@@ -304,7 +308,7 @@ class App(ctk.CTk):
         try:
             self.tray_icon.run()
         except Exception as exc:
-            self.log_message(f"System tray unavailable: {exc}")
+            self._ui_events.put(("tray_failed", str(exc)))
 
     def show_window_from_tray(self):
         if self._shutting_down:
@@ -321,7 +325,7 @@ class App(ctk.CTk):
         self.dns_menu.configure(state="disabled")
         self.startup_switch.configure(state="disabled")
         try:
-            self.runner.stop()
+            self.runner.close()
             self.is_running = False
         finally:
             if self.tray_icon:
