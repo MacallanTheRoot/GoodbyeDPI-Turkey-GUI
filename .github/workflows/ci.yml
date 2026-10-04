@@ -1,29 +1,76 @@
-name: Build and test
+name: Build verification
+
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  check:
-    strategy:
-      matrix:
-        os: [windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+  linux:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
-      - run: python -m pip install -r requirements.txt
-      - run: python -m unittest discover -s tests -v
-      - name: Build Windows executable
-        if: runner.os == 'Windows'
+          python-version: '3.13'
+      - name: Prepare build environment
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -r requirements.txt
+      - name: Unit and Qt tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: .venv/bin/python -m unittest discover -s tests -v
+      - name: Static checks
+        run: |
+          .venv/bin/python -m compileall -q src tests
+          .venv/bin/python -m pip check
+          bash -n build_linux.sh packaging/linux/install.sh packaging/linux/uninstall.sh packaging/debian/build_deb.sh
+      - name: Build Linux and Debian packages
+        run: |
+          ./build_linux.sh
+          packaging/debian/build_deb.sh
+          dpkg-deb --info dist/*.deb
+          dpkg-deb --contents dist/*.deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-rc
+          path: |
+            dist/goodbyedpi-turkey/
+            dist/*.deb
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - name: Prepare build environment
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+      - name: Unit and Qt tests
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+      - name: Static checks
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\python.exe -m compileall -q src tests
+          .\.venv\Scripts\python.exe -m pip check
+      - name: Build Windows onefile
         shell: cmd
-        run: >-
-          python -m PyInstaller --noconfirm --clean --onefile --windowed
-          --name GoodbyeDPI-Turkey --collect-all customtkinter
-          --hidden-import pystray --hidden-import PIL._tkinter_finder
-          --add-data "bin;bin" src/main.py
-      - name: Build Linux directory
-        if: runner.os == 'Linux'
-        run: ./build_linux.sh
+        run: build.bat
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-rc
+          path: dist/GoodbyeDPI-Turkey.exe
+          if-no-files-found: error

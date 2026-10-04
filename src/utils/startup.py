@@ -12,33 +12,37 @@ def startup_path(platform_name=None, environ=None, home=None):
     if platform_name == "win32":
         appdata = Path(environ.get("APPDATA") or home / "AppData/Roaming")
         return appdata / "Microsoft/Windows/Start Menu/Programs/Startup/GoodbyeDPI-Turkey GUI.lnk"
+    if platform_name != "linux":
+        raise NotImplementedError(f"Autostart for {platform_name} is unsupported")
     config_home = Path(environ.get("XDG_CONFIG_HOME") or home / ".config")
     return config_home / "autostart/goodbyedpi-turkey.desktop"
 
 
-def is_enabled():
-    return startup_path().exists()
+def is_enabled(platform_name=None, environ=None, home=None):
+    return startup_path(platform_name, environ, home).exists()
 
 
-def _launch_command():
+def _launch_command(platform_name=None):
+    platform_name = platform_name or sys.platform
     if getattr(sys, "frozen", False):
         return sys.executable, "--minimized"
     executable = sys.executable
-    if sys.platform == "win32":
+    if platform_name == "win32":
         windowless = executable.replace("python.exe", "pythonw.exe")
         if Path(windowless).exists():
             executable = windowless
     return executable, f'"{Path(__file__).resolve().parents[1] / "main.py"}" --minimized'
 
 
-def set_enabled(enabled: bool):
-    path = startup_path()
+def set_enabled(enabled: bool, platform_name=None, environ=None, home=None):
+    platform_name = platform_name or sys.platform
+    path = startup_path(platform_name, environ, home)
     if not enabled:
         path.unlink(missing_ok=True)
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    executable, arguments = _launch_command()
-    if sys.platform == "win32":
+    executable, arguments = _launch_command(platform_name)
+    if platform_name == "win32":
         def quote(value):
             return "'" + str(value).replace("'", "''") + "'"
         script = (
@@ -48,8 +52,14 @@ def set_enabled(enabled: bool):
         )
         subprocess.run(["powershell", "-NoProfile", "-Command", script], check=True)
     else:
-        # The installed launch command is stable even when /opt is read-only.
-        command = "goodbyedpi-turkey" if getattr(sys, "frozen", False) else f'"{executable}" {arguments.removesuffix(" --minimized")}'
+        def desktop_quote(value):
+            # Desktop Entry Exec syntax uses double quotes and backslash escapes.
+            return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$').replace('`', '\\`').replace('%', '%%') + '"'
+        if getattr(sys, "frozen", False):
+            command = desktop_quote(executable)
+        else:
+            source = Path(__file__).resolve().parents[1] / "main.py"
+            command = f"{desktop_quote(executable)} {desktop_quote(source)}"
         path.write_text(
             "[Desktop Entry]\nType=Application\nName=GoodbyeDPI Turkey\n"
             f"Exec={command} --minimized\nTerminal=false\n"

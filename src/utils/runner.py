@@ -6,10 +6,16 @@ import threading
 import ctypes
 import atexit
 import shutil
+import logging
+import socket
+import time
 from pathlib import Path
 from ctypes import wintypes
 from .detector import get_os, get_arch
 from .paths import resource_path
+
+logger = logging.getLogger(__name__)
+STOP_TIMEOUT = 3
 
 # Windows Job Object Constants
 if os.name == 'nt':
@@ -47,13 +53,13 @@ class DNSRunner:
     def __init__(self, log_callback=None):
         self.process = None
         self.os_type = get_os()
-        self.arch = get_arch()
+        self.arch = get_arch(self.os_type)
         self.log_callback = log_callback
         self.output_thread = None
         self.job_handle = None
         self._lock = threading.RLock()
         
-        # Ensure cleanup on normal exit
+        # Last resort if the GUI never reaches its explicit shutdown path.
         atexit.register(self.stop)
 
     def start(self, dns_addr="77.88.8.8", dns_port="1253"):
@@ -80,54 +86,87 @@ class DNSRunner:
                     raise
 
     def close(self):
-        """Explicit final cleanup; disable the atexit fallback afterward."""
+        """Explicit final cleanup; retain the fallback if resources remain."""
         self.stop()
-        atexit.unregister(self.stop)
+        if self.process is None and self.output_thread is None and self.job_handle is None:
+            atexit.unregister(self.stop)
 
     def stop(self):
         with self._lock:
             process = self.process
-            if process is None:
-                self._close_job_handle()
-                return
-            reaped = False
-            try:
-                if process.poll() is None:
+            reaped = process is None
+            if process is not None:
+                try:
+                    running = process.poll() is None
+                except (OSError, ValueError):
+                    logger.warning("Could not inspect engine; attempting to stop it", exc_info=True)
+                    running = True
+                if running:
                     try:
                         process.terminate()
-                    except ProcessLookupError:
-                        pass  # It exited between poll and terminate.
-                try:
-                    process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()  # Reap before PyInstaller removes _MEIPASS.
-                reaped = True
-            finally:
-                thread = self.output_thread
-                if thread and thread is not threading.current_thread():
-                    thread.join(timeout=2)
-                for name in ('stdin', 'stdout', 'stderr'):
-                    pipe = getattr(process, name, None)
-                    if pipe is not None:
+                    except (OSError, ValueError):
+                        # The process may have exited between poll and terminate.
+                        logger.debug("Could not terminate engine", exc_info=True)
+                reaped = self._wait_for_process(process)
+                if not reaped:
+                    try:
+                        process.kill()
+                    except (OSError, ValueError):
+                        logger.debug("Could not kill engine", exc_info=True)
+                    reaped = self._wait_for_process(process)
+
+                for name in ("stdin", "stdout", "stderr"):
+                    stream = getattr(process, name, None)
+                    if stream is not None:
                         try:
-                            pipe.close()
-                        except OSError:
-                            pass
-                if thread and thread.is_alive() and thread is not threading.current_thread():
-                    thread.join(timeout=1)
+                            stream.close()
+                        except Exception:
+                            # One broken stream must not prevent the other handles closing.
+                            logger.warning("Could not close engine %s stream", name, exc_info=True)
+
+            thread = self.output_thread
+            reader_done = thread is None
+            if thread is not None and thread is not threading.current_thread():
+                try:
+                    thread.join(timeout=STOP_TIMEOUT)
+                    reader_done = not thread.is_alive()
+                except RuntimeError:
+                    # Thread.start() can fail before the reader actually starts.
+                    reader_done = True
+
+            try:
                 self._close_job_handle()
-                if reaped:
-                    self.process = None
-                    self.output_thread = None
+            except OSError:
+                logger.warning("Could not close engine Job Object", exc_info=True)
+
+            # Closing a Windows Job Object can finish a child that resisted kill.
+            if process is not None and not reaped:
+                reaped = self._wait_for_process(process)
+            if not reaped:
+                logger.warning("Engine was not reaped during shutdown")
+            if not reader_done:
+                logger.warning("Engine output reader did not finish during shutdown")
+            if reaped and reader_done and self.job_handle is None:
+                self.process = None
+                self.output_thread = None
+
+    @staticmethod
+    def _wait_for_process(process):
+        try:
+            process.wait(timeout=STOP_TIMEOUT)
+            return True
+        except subprocess.TimeoutExpired:
+            return False
+        except (OSError, ValueError):
+            logger.warning("Could not wait for engine", exc_info=True)
+            return False
 
     def _close_job_handle(self):
         if self.job_handle:
-            try:
-                ctypes.windll.kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-                ctypes.windll.kernel32.CloseHandle(self.job_handle)
-            finally:
-                self.job_handle = None
+            ctypes.windll.kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            if not ctypes.windll.kernel32.CloseHandle(self.job_handle):
+                raise ctypes.WinError()
+            self.job_handle = None
 
     def _read_output(self, process):
         """Reads stdout/stderr and sends to callback"""
@@ -204,19 +243,40 @@ class DNSRunner:
 
     def _start_linux(self, dns_addr, dns_port):
         executable = find_spoof_dpi()
+        # SpoofDPI v0.12.0 uses plain DNS at this address and port unless
+        # -enable-doh is supplied; arbitrary provider IPs need not serve DoH.
         args = [
             executable,
+            "-addr", "127.0.0.1",
             "-dns-addr", dns_addr,
-            "-port", "8080", 
-             "-enable-doh",
-             "-system-proxy=false",
-             "-window-size", "0" 
+            "-dns-port", str(dns_port),
+            "-port", "8080",
+            "-system-proxy=false",
         ]
-        
-        self.process = subprocess.Popen(
-            args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-        )
+        # A listening socket is a stronger launch check than Popen succeeding.
+        # Check for a pre-existing listener so it cannot be mistaken for ours.
+        with socket.socket() as probe:
+            if probe.connect_ex(("127.0.0.1", 8080)) == 0:
+                raise OSError("Port 8080 is already in use; close the existing proxy first.")
+        self.process = subprocess.Popen(args, stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            if self.process.poll() is not None:
+                if self.log_callback and self.process.stdout is not None:
+                    output = self.process.stdout.read().decode("utf-8", errors="replace").strip()
+                    if output:
+                        self.log_callback(output)
+                self.stop()
+                raise RuntimeError("SpoofDPI exited before its proxy started. Check Activity for details.")
+            with socket.socket() as probe:
+                probe.settimeout(0.1)
+                if probe.connect_ex(("127.0.0.1", 8080)) == 0:
+                    if self.process.poll() is None:
+                        return
+            threading.Event().wait(0.05)
+        self.stop()
+        raise RuntimeError("SpoofDPI did not open 127.0.0.1:8080 within 3 seconds.")
 
 
 def find_spoof_dpi():
@@ -227,12 +287,15 @@ def find_spoof_dpi():
         str(Path.home() / "go/bin/spoofdpi"),
         "/usr/local/bin/spoof-dpi",
         "/usr/local/bin/spoofdpi",
+        "/usr/bin/spoof-dpi",
+        "/usr/bin/spoofdpi",
         "/opt/goodbyedpi-turkey/bin/spoof-dpi",
         "/opt/goodbyedpi-turkey/bin/spoofdpi",
     ]
     for candidate in candidates:
         if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
+    logger.error("SpoofDPI executable is missing")
     raise FileNotFoundError(
         "SpoofDPI not found. Build the reviewed v0.12.0 engine with "
         "'go install github.com/xvzc/SpoofDPI/cmd/spoofdpi@v0.12.0' "

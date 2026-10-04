@@ -12,7 +12,6 @@ from utils.paths import config_dir, resource_path, resource_root
 from utils.config import ConfigManager
 from utils.runner import DNSRunner, find_spoof_dpi
 from utils.startup import startup_path, set_enabled
-from utils.tray import SystemTrayIcon
 
 
 class FakeProcess:
@@ -45,7 +44,8 @@ class FakeProcess:
 
 class RunnerStopTests(unittest.TestCase):
     def runner(self, process):
-        runner = DNSRunner()
+        with patch("utils.runner.atexit.register"):
+            runner = DNSRunner()
         runner.process = process
         return runner
 
@@ -60,7 +60,7 @@ class RunnerStopTests(unittest.TestCase):
         for pipe in (process.stdin, process.stdout, process.stderr):
             pipe.close.assert_called_once()
         self.assertIsNone(runner.process)
-        output_thread.join.assert_called_once_with(timeout=2)
+        output_thread.join.assert_called_once_with(timeout=3)
         runner.stop()
         self.assertEqual(process.events, ["terminate", "wait"])
 
@@ -77,6 +77,69 @@ class RunnerStopTests(unittest.TestCase):
         runner.stop()
         self.assertEqual(process.events, ["wait"])
         self.assertIsNone(runner.process)
+
+    def test_stop_without_process_is_repeatable(self):
+        runner = self.runner(None)
+        runner.stop()
+        runner.stop()
+        self.assertIsNone(runner.process)
+
+    def test_job_handle_is_closed_once_without_process(self):
+        runner = self.runner(None)
+        runner.job_handle = 123
+        close_handle = Mock(return_value=1)
+        fake_windll = SimpleNamespace(kernel32=SimpleNamespace(CloseHandle=close_handle))
+        with patch("utils.runner.ctypes.windll", fake_windll, create=True):
+            runner.stop()
+            runner.stop()
+        close_handle.assert_called_once_with(123)
+        self.assertIsNone(runner.job_handle)
+
+    def test_broken_stream_does_not_skip_other_cleanup(self):
+        process = FakeProcess()
+        process.stdin.close.side_effect = OSError("already closed")
+        runner = self.runner(process)
+        with self.assertLogs("utils.runner", level="WARNING"):
+            runner.stop()
+        process.stdout.close.assert_called_once()
+        process.stderr.close.assert_called_once()
+        self.assertIsNone(runner.process)
+
+    def test_terminate_error_still_waits_and_reaps(self):
+        process = FakeProcess()
+        process.terminate = Mock(side_effect=ProcessLookupError())
+        runner = self.runner(process)
+        runner.stop()
+        self.assertEqual(process.events, ["wait"])
+        self.assertIsNone(runner.process)
+
+    def test_second_wait_is_bounded_and_keeps_unreaped_process(self):
+        process = FakeProcess()
+        process.wait = Mock(side_effect=subprocess.TimeoutExpired("engine", 3))
+        runner = self.runner(process)
+        with self.assertLogs("utils.runner", level="WARNING"):
+            runner.stop()
+        self.assertEqual(process.wait.call_count, 3)
+        self.assertTrue(all(call.kwargs == {"timeout": 3} for call in process.wait.call_args_list))
+        self.assertIs(runner.process, process)
+
+    def test_explicit_close_unregisters_atexit_fallback(self):
+        process = FakeProcess()
+        runner = self.runner(process)
+        with patch("utils.runner.atexit.unregister") as unregister:
+            runner.close()
+        unregister.assert_called_once_with(runner.stop)
+        self.assertIsNone(runner.process)
+
+    def test_unreaped_process_keeps_atexit_fallback(self):
+        process = FakeProcess()
+        process.wait = Mock(side_effect=subprocess.TimeoutExpired("engine", 3))
+        runner = self.runner(process)
+        with patch("utils.runner.atexit.unregister") as unregister, \
+             self.assertLogs("utils.runner", level="WARNING"):
+            runner.close()
+        unregister.assert_not_called()
+        self.assertIs(runner.process, process)
 
 
 class PlatformPathsTests(unittest.TestCase):
@@ -129,23 +192,6 @@ class PlatformPathsTests(unittest.TestCase):
                  patch("utils.runner.Path.home", return_value=Path(directory)):
                 self.assertEqual(find_spoof_dpi(), str(binary))
 
-
-class TrayTests(unittest.TestCase):
-    def test_show_is_default_menu_action(self):
-        items = []
-        class FakeIcon:
-            def __init__(self, _name, _image, _title, menu):
-                self.menu = menu
-            def run(self):
-                pass
-        def item(label, callback, **options):
-            items.append((label, callback, options))
-            return label
-        with patch.dict(sys.modules, {"pystray": SimpleNamespace(MenuItem=item, Icon=FakeIcon)}):
-            SystemTrayIcon(None, lambda: None, lambda: None).run()
-        self.assertEqual(items[0][0], "Show")
-        self.assertTrue(items[0][2]["default"])
-        self.assertEqual(items[1][0], "Quit")
 
 
 if __name__ == "__main__":

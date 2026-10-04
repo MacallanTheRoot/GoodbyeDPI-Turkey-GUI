@@ -6,7 +6,7 @@ from pathlib import Path
 
 def resource_root() -> Path:
     if getattr(sys, "frozen", False):
-        return Path(sys._MEIPASS)
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
     return Path(__file__).resolve().parents[2]
 
 
@@ -21,5 +21,7 @@ def config_dir(platform_name: str | None = None, environ=None, home=None) -> Pat
     if platform_name == "win32":
         base = environ.get("APPDATA") or str(home / "AppData/Roaming")
         return Path(base) / "GoodbyeDPI-Turkey"
+    if platform_name != "linux":
+        raise NotImplementedError(f"Configuration path for {platform_name} is unsupported")
     base = environ.get("XDG_CONFIG_HOME") or str(home / ".config")
     return Path(base) / "goodbyedpi-turkey"

@@ -1,16 +1,26 @@
 # UI foundations
 
-The application uses a compact utility layout. The status and one primary action come first; DNS and preferences are secondary; Activity starts collapsed. A window may scroll at increased desktop scaling. The visual language follows hierarchy, restraint, and familiar controls without platform-owned assets or simulated system chrome.
+The production interface uses PySide6 / Qt Widgets. Status and the primary
+Enable or Disable action come first; DNS and preferences are secondary;
+Activity starts collapsed. The main window has a 520 × 620 minimum and
+scrolls when scaling or longer text requires it.
 
-`src/utils/theme.py` is the source of truth for light and dark semantic colors. Components use semantic roles (`background`, `surface`, `surface_alt`, `text`, `muted`, `border`, `accent`, `success`) rather than inline hex values. The spacing scale is 4, 8, 16, 24, and 32 pixels. Cards have a 16 pixel radius; controls have a 12 pixel radius.
+`src/ui/tokens.py` defines Light and Dark semantic colors.
+`src/ui/theme.py` applies the Qt palette and stylesheet. The design uses
+distinct surfaces, readable text, visible focus, and state text alongside
+color. The System preference follows Qt's reported appearance.
 
 | Component | States | Role |
 | --- | --- | --- |
-| Protection card | Off, active, engine error | Text and indicator communicate state together |
-| Primary action | Activate, deactivate, disabled during exit | One prominent action |
-| DNS option menu | Enabled, disabled while active | Selects the engine DNS address |
-| Startup switch | On, off | User-level autostart |
-| Appearance menu | System, light, dark | Changes both semantic color modes |
-| Activity section | Collapsed, expanded | Keeps logs available without dominating the window |
+| Status card | Inactive, starting, active, stopping, error | Text and indicator communicate state |
+| Primary action | Enable, Disable, transition disabled | One prominent action |
+| DNS selector | Enabled, disabled while active | Selects backend DNS address and port |
+| Startup control | On, off | User-level autostart |
+| Appearance selector | System, Light, Dark | Chooses semantic color mode |
+| Activity | Collapsed, expanded | Shows bounded engine logs |
 
-Segoe UI Variable is requested on Windows. Linux requests Noto Sans, with the desktop's font fallback if unavailable. The shield icon is original art generated in `src/utils/icon_generator.py`. No Apple font, icon, or other proprietary asset is bundled.
+Segoe UI Variable is requested on Windows and Noto Sans on Linux, with
+desktop font fallback. The original blue shield is retained as
+`assets/icon.png` for Qt and Linux, and `assets/icon.ico` embeds
+16–128 px resolutions for Windows. `packaging/generate_icon.py`
+regenerates the ICO from the PNG. No platform-owned art is bundled.

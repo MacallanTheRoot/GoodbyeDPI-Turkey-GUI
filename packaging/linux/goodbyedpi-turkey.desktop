@@ -5,4 +5,4 @@ Comment=Control the local SpoofDPI proxy
 Exec=goodbyedpi-turkey
 Icon=goodbyedpi-turkey
 Terminal=false
-Categories=Network;Utility;
+Categories=Network;
