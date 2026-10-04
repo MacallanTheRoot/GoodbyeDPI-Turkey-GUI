@@ -5,8 +5,11 @@ import sys
 import threading
 import ctypes
 import atexit
+import shutil
+from pathlib import Path
 from ctypes import wintypes
 from .detector import get_os, get_arch
+from .paths import resource_path
 
 # Windows Job Object Constants
 if os.name == 'nt':
@@ -49,54 +52,78 @@ class DNSRunner:
         self.log_callback = log_callback
         self.output_thread = None
         self.job_handle = None
+        self._lock = threading.RLock()
         
         # Ensure cleanup on normal exit
         atexit.register(self.stop)
 
     def start(self, dns_addr="77.88.8.8", dns_port="1253"):
-        if self.process:
-            return # Already running
-
-        if self.os_type == 'windows':
-            self._start_windows(dns_addr, dns_port)
-        elif self.os_type == 'linux':
-            self._start_linux(dns_addr, dns_port)
-        else:
-            raise NotImplementedError(f"OS {self.os_type} not supported")
-            
-        # Start reading output
-        if self.log_callback:
-            self.output_thread = threading.Thread(target=self._read_output, daemon=True)
-            self.output_thread.start()
+        with self._lock:
+            if self.process is not None:
+                if self.process.poll() is None:
+                    return
+                self.stop()
+            if self.os_type == 'windows':
+                self._start_windows(dns_addr, dns_port)
+            elif self.os_type == 'linux':
+                self._start_linux(dns_addr, dns_port)
+            else:
+                raise NotImplementedError(f"OS {self.os_type} not supported")
+            if self.log_callback and self.process.stdout is not None:
+                process = self.process
+                self.output_thread = threading.Thread(
+                    target=self._read_output, args=(process,), daemon=True,
+                    name="engine-output")
+                self.output_thread.start()
 
     def stop(self):
-        if self.process:
-            # Send terminate signal
-            self.process.terminate()
+        with self._lock:
+            process = self.process
+            if process is None:
+                self._close_job_handle()
+                return
+            reaped = False
             try:
-                self.process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self.process.kill() # Force kill if necessary
-            self.process = None
-        
-        # Close job handle if it exists (Windows)
+                if process.poll() is None:
+                    process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()  # Reap before PyInstaller removes _MEIPASS.
+                reaped = True
+            finally:
+                thread = self.output_thread
+                if thread and thread is not threading.current_thread():
+                    thread.join(timeout=2)
+                for name in ('stdin', 'stdout', 'stderr'):
+                    pipe = getattr(process, name, None)
+                    if pipe is not None:
+                        try:
+                            pipe.close()
+                        except OSError:
+                            pass
+                if thread and thread.is_alive() and thread is not threading.current_thread():
+                    thread.join(timeout=1)
+                self._close_job_handle()
+                if reaped:
+                    self.process = None
+                    self.output_thread = None
+
+    def _close_job_handle(self):
         if self.job_handle:
             try:
                 ctypes.windll.kernel32.CloseHandle(self.job_handle)
-            except:
-                pass
-            self.job_handle = None
+            finally:
+                self.job_handle = None
 
-    def _read_output(self):
+    def _read_output(self, process):
         """Reads stdout/stderr and sends to callback"""
-        if not self.process:
-            return
-            
         # Read line by line
         # Note: This is a simple blocking read. 
         # For merging stdout/stderr, we usually need more complex handling or just pipe stderr to stdout
         try:
-             for line in iter(self.process.stdout.readline, b''):
+             for line in iter(process.stdout.readline, b''):
                 if self.log_callback:
                     self.log_callback(line.decode('utf-8', errors='replace').strip())
         except (ValueError, OSError):
@@ -104,41 +131,27 @@ class DNSRunner:
 
     def _assign_job_object(self, processes_handle):
         """Assigns the process to a Job Object that kills it on close"""
-        try:
-            job = ctypes.windll.kernel32.CreateJobObjectW(None, None)
-            self.job_handle = job
-
-            info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-
-            ctypes.windll.kernel32.SetInformationJobObject(
-                job,
-                JOBOBJECT_EXTENDEDLIMIT_INFORMATION,
-                ctypes.pointer(info),
-                ctypes.sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION)
-            )
-
-            ctypes.windll.kernel32.AssignProcessToJobObject(job, processes_handle)
-        except Exception as e:
-            if self.log_callback:
-                self.log_callback(f"Warning: Could not create Job Object: {e}")
+        kernel32 = ctypes.windll.kernel32
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            raise OSError("CreateJobObjectW failed")
+        self.job_handle = job
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(
+            job, JOBOBJECT_EXTENDEDLIMIT_INFORMATION, ctypes.pointer(info),
+            ctypes.sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION)
+        ) or not kernel32.AssignProcessToJobObject(job, processes_handle):
+            self._close_job_handle()
+            raise OSError("Could not assign GoodbyeDPI to a Windows Job Object")
 
     def _start_windows(self, dns_addr, dns_port):
-        # Determine base path for binaries
-        if getattr(sys, 'frozen', False):
-            # Running as PyInstaller bundle
-            # Binaries should be in internal _MEIPASS/bin
-            base_dir = sys._MEIPASS
-            exe_path = os.path.join(base_dir, "bin", self.arch, "goodbyedpi.exe")
-        else:
-            # Running from source
-            # self.base_path is .../src. Binaries are in .../bin
-            exe_path = os.path.join(self.base_path, "..", "bin", self.arch, "goodbyedpi.exe")
-        
-        exe_path = os.path.abspath(exe_path)
+        exe_path = resource_path("bin", self.arch, "goodbyedpi.exe")
+        if not exe_path.is_file():
+            raise FileNotFoundError(f"GoodbyeDPI executable missing: {exe_path}")
         
         args = [
-            exe_path,
+            str(exe_path),
             "-5",
             "--set-ttl", "5",
             "--dns-addr", dns_addr,
@@ -167,26 +180,39 @@ class DNSRunner:
         )
         
         # Assign to Job Object for clean exit
-        if self.os_type == 'windows':
+        try:
             self._assign_job_object(self.process._handle)
+        except Exception:
+            self.stop()
+            raise
 
     def _start_linux(self, dns_addr, dns_port):
-        # Look for spoof-dpi in path or local
+        executable = find_spoof_dpi()
         args = [
-            "spoof-dpi",
+            executable,
             "-dns-addr", dns_addr,
             "-port", "8080", 
              "-enable-doh",
              "-window-size", "0" 
         ]
         
-        try:
-             self.process = subprocess.Popen(
-                 args,
-                 stdout=subprocess.PIPE,
-                 stderr=subprocess.STDOUT
-             )
-        except FileNotFoundError:
-            if self.log_callback:
-                self.log_callback("Error: SpoofDPI not found. Please run install_linux.sh")
-            raise FileNotFoundError("SpoofDPI not found")
+        self.process = subprocess.Popen(
+            args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+        )
+
+
+def find_spoof_dpi():
+    candidates = [
+        shutil.which("spoof-dpi"),
+        str(Path.home() / ".spoof-dpi/bin/spoof-dpi"),
+        "/usr/local/bin/spoof-dpi",
+        "/opt/goodbyedpi-turkey/bin/spoof-dpi",
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    raise FileNotFoundError(
+        "SpoofDPI not found. Install a trusted spoof-dpi binary in PATH, "
+        "~/.spoof-dpi/bin, /usr/local/bin, or /opt/goodbyedpi-turkey/bin."
+    )
