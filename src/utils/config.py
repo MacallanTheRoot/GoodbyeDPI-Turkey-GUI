@@ -1,36 +1,31 @@
+"""Per-user settings; the application directory can remain read-only."""
 import json
-import os
+from pathlib import Path
+
+from .paths import config_dir
+
 
 class ConfigManager:
-    def __init__(self, config_dir):
-        self.config_file = os.path.join(config_dir, "config.json")
-        self.default_config = {
-            "dns_provider": "Turkey DNSRedir",
-        }
+    def __init__(self, directory: Path | None = None):
+        self.config_file = (directory or config_dir()) / "config.json"
+        self.default_config = {"dns_provider": "Turkey DNSRedir", "theme": "System"}
         self.config = self.load_config()
 
     def load_config(self):
-        if not os.path.exists(self.config_file):
-            return self.default_config.copy()
-        
         try:
-            with open(self.config_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                # Merge with default to ensure all keys exist
-                config = self.default_config.copy()
-                config.update(data)
-                return config
-        except Exception as e:
-            print(f"Error loading config: {e}")
+            with self.config_file.open("r", encoding="utf-8") as stream:
+                data = json.load(stream)
+            return {**self.default_config, **data} if isinstance(data, dict) else self.default_config.copy()
+        except (FileNotFoundError, ValueError, OSError):
             return self.default_config.copy()
 
     def save_config(self, key, value):
         self.config[key] = value
-        try:
-            with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(self.config, f, indent=4)
-        except Exception as e:
-            print(f"Error saving config: {e}")
+        self.config_file.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.config_file.with_suffix(".tmp")
+        with temporary.open("w", encoding="utf-8") as stream:
+            json.dump(self.config, stream, indent=2)
+        temporary.replace(self.config_file)
 
     def get(self, key):
         return self.config.get(key, self.default_config.get(key))

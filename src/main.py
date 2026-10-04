@@ -17,6 +17,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from utils.runner import DNSRunner
 from utils.tray import SystemTrayIcon
+from utils import startup
 
 def is_admin():
     try:
@@ -37,7 +38,7 @@ class App(ctk.CTk):
         self.geometry("450x550")
         
         # Initialize Config
-        self.config_manager = ConfigManager(os.path.dirname(os.path.abspath(__file__)))
+        self.config_manager = ConfigManager()
 
         # Set Window Icon
         try:
@@ -293,43 +294,19 @@ class App(ctk.CTk):
 
     # --- Startup Logic (Shortcut based) ---
     def get_startup_path(self):
-        return os.path.join(os.getenv('APPDATA'), r'Microsoft\Windows\Start Menu\Programs\Startup', 'GoodbyeDPI-Turkey GUI.lnk')
+        return str(startup.startup_path())
 
     def check_startup_status(self):
-        if os.path.exists(self.get_startup_path()):
-            self.startup_var.set(True)
-        else:
-            self.startup_var.set(False)
+        self.startup_var.set(startup.is_enabled())
 
     def toggle_startup(self):
-        lnk_path = self.get_startup_path()
-        if self.startup_var.get():
-            # Create Shortcut
-            try:
-                exe = sys.executable.replace("python.exe", "pythonw.exe")
-                if not os.path.exists(exe): exe = sys.executable
-                
-                script = os.path.abspath(__file__)
-                # Arguments: script path + minimized flag
-                args = f'"{script}" --minimized'
-                
-                # PowerShell command to create shortcut
-                ps_cmd = f'$WS = New-Object -ComObject WScript.Shell; $SC = $WS.CreateShortcut("{lnk_path}"); $SC.TargetPath = "{exe}"; $SC.Arguments = \'{args}\'; $SC.Save()'
-                
-                subprocess.run(["powershell", "-Command", ps_cmd], check=True)
-                self.log_message("Added to startup (Shortcut created).")
-            except Exception as e:
-                self.log_message(f"Error creating shortcut: {e}")
-                self.startup_var.set(False)
-        else:
-            # Remove Shortcut
-            try:
-                if os.path.exists(lnk_path):
-                    os.remove(lnk_path)
-                    self.log_message("Removed from startup.")
-            except Exception as e:
-                 self.log_message(f"Error removing shortcut: {e}")
-                 self.startup_var.set(True)
+        enabled = self.startup_var.get()
+        try:
+            startup.set_enabled(enabled)
+            self.log_message("Autostart enabled." if enabled else "Autostart disabled.")
+        except Exception as exc:
+            self.startup_var.set(not enabled)
+            self.log_message(f"Could not change autostart: {exc}")
 
 if __name__ == "__main__":
     start_minimized = "--minimized" in sys.argv
