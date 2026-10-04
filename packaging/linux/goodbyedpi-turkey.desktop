@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=GoodbyeDPI Turkey
+Comment=Control the local SpoofDPI proxy
+Exec=goodbyedpi-turkey
+Icon=goodbyedpi-turkey
+Terminal=false
+Categories=Network;Utility;
