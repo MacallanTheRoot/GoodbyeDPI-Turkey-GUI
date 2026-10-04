@@ -2,6 +2,7 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import ttk
 import threading
+import queue
 import os
 import sys
 import ctypes
@@ -51,8 +52,12 @@ class App(ctk.CTk):
         self.runner = DNSRunner(os.path.dirname(os.path.abspath(__file__)), self.log_message)
         self.is_running = False
         self.tray_icon = None
+        self.tray_thread = None
+        self._ui_events = queue.Queue()
+        self._shutting_down = False
 
         self.create_widgets()
+        self.after(50, self._process_ui_events)
         
         # Override window close event
         self.protocol('WM_DELETE_WINDOW', self.hide_window)
@@ -186,6 +191,8 @@ class App(ctk.CTk):
     # ... rest of methods (start_service, stop_service, etc) unchanged ...
 
     def start_service(self):
+        if self._shutting_down or self.is_running:
+            return
         dns_name = self.dns_var.get()
         addr, port = self.dns_options[dns_name]
         
@@ -198,6 +205,8 @@ class App(ctk.CTk):
             self.log_message(f"Error starting: {e}")
 
     def stop_service(self):
+        if self._shutting_down:
+            return
         self.log_message("Stopping service...")
         self.runner.stop()
         self.is_running = False
@@ -221,28 +230,66 @@ class App(ctk.CTk):
             self.dns_menu.configure(state="normal")
 
     def log_message(self, message):
-        def _log():
-            self.log_textbox.insert("end", message + "\n")
-            self.log_textbox.see("end")
-        self.after(0, _log)
+        self._ui_events.put(("log", message))
+
+    def _process_ui_events(self):
+        while True:
+            try:
+                action, value = self._ui_events.get_nowait()
+            except queue.Empty:
+                break
+            if action == "log" and not self._shutting_down:
+                self.log_textbox.insert("end", value + "\n")
+                self.log_textbox.see("end")
+            elif action == "show":
+                self.show_window_from_tray()
+            elif action == "quit":
+                self.quit_app()
+        if not self._shutting_down:
+            self.after(50, self._process_ui_events)
 
     def hide_window(self):
+        if self._shutting_down:
+            return
         self.withdraw()
         if not self.tray_icon:
-            self.tray_thread = threading.Thread(target=self.run_tray)
+            self.tray_icon = SystemTrayIcon(
+                self, lambda: self._ui_events.put(("show", None)),
+                lambda: self._ui_events.put(("quit", None)))
+            self.tray_thread = threading.Thread(target=self.run_tray, name="tray")
             self.tray_thread.daemon = True
             self.tray_thread.start()
 
     def run_tray(self):
-        self.tray_icon = SystemTrayIcon(self, self.show_window_from_tray, self.quit_app)
-        self.tray_icon.run()
+        try:
+            self.tray_icon.run()
+        except Exception as exc:
+            self.log_message(f"System tray unavailable: {exc}")
 
     def show_window_from_tray(self):
-        self.after(0, self.deiconify)
+        if self._shutting_down:
+            return
+        self.deiconify()
+        self.lift()
+        self.focus_force()
 
     def quit_app(self):
-        self.stop_service()
-        self.quit()
+        if self._shutting_down:
+            return
+        self._shutting_down = True
+        self.btn_start.configure(state="disabled")
+        self.btn_stop.configure(state="disabled")
+        self.dns_menu.configure(state="disabled")
+        self.startup_switch.configure(state="disabled")
+        try:
+            self.runner.stop()
+            self.is_running = False
+        finally:
+            if self.tray_icon:
+                self.tray_icon.stop()
+            if self.tray_thread and self.tray_thread is not threading.current_thread():
+                self.tray_thread.join(timeout=2)
+            self.destroy()
 
     # --- Startup Logic (Shortcut based) ---
     def get_startup_path(self):

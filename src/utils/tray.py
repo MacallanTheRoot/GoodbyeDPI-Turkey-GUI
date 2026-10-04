@@ -1,5 +1,4 @@
 import pystray
-from PIL import Image, ImageDraw
 
 from utils.icon_generator import create_icon
 
@@ -13,7 +12,7 @@ class SystemTrayIcon:
     def run(self):
         image = create_icon()
         menu = (
-             pystray.MenuItem('Show', self.on_show),
+             pystray.MenuItem('Show', self.on_show, default=True),
              pystray.MenuItem('Quit', self.on_quit)
         )
         self.icon = pystray.Icon("name", image, "GoodbyeDPI-Turkey GUI", menu)
@@ -23,7 +22,6 @@ class SystemTrayIcon:
         self.show_callback()
 
     def on_quit(self, icon, item):
-        self.icon.stop()
         self.quit_callback()
     
     def stop(self):
