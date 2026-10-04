@@ -11,9 +11,8 @@ if not exist "%VENV_PYTHON%" (
 echo Using Virtual Environment Python: %VENV_PYTHON%
 
 echo Installing Dependencies into venv...
-"%VENV_PYTHON%" -m pip install --upgrade pip
 "%VENV_PYTHON%" -m pip install -r requirements.txt
-"%VENV_PYTHON%" -m pip install pyinstaller
+if errorlevel 1 exit /b 1
 
 echo Cleaning up previous builds...
 if exist build rmdir /s /q build
@@ -21,13 +20,14 @@ if exist dist rmdir /s /q dist
 if exist *.spec del *.spec
 
 echo Building Executable...
-"%VENV_PYTHON%" -m PyInstaller --noconsole --onefile ^
+"%VENV_PYTHON%" -m PyInstaller --noconfirm --noconsole --onefile ^
     --name "GoodbyeDPI-Turkey" ^
     --collect-all customtkinter ^
     --hidden-import PIL ^
     --hidden-import pystray ^
     --add-data "bin;bin" ^
     src/main.py
+if errorlevel 1 exit /b 1
 
 echo Build Complete!
 echo Check the 'dist' folder for your executable.

@@ -1,19 +1,9 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
+.venv/
 venv/
-env/
-.env
-
-# Distribution / PyInstaller
 build/
 dist/
 *.spec
-
-# IDE
-.vscode/
-.idea/
-
-# Local Config
-config.json
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.log

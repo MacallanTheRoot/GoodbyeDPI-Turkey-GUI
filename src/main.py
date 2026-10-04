@@ -1,23 +1,18 @@
 import customtkinter as ctk
-import tkinter as tk
-from tkinter import ttk
 import threading
 import queue
 import os
 import sys
 import ctypes
 import subprocess
-# import winreg # No longer needed for startup, but might be needed for other things? No, only used for startup in previous code.
 
 from PIL import ImageTk
 from utils.icon_generator import create_icon
 
-# Ensure local imports work
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 from utils.runner import DNSRunner
 from utils.tray import SystemTrayIcon
 from utils import startup
+from utils.theme import COLORS, FONT, SPACE, RADIUS
 
 def is_admin():
     try:
@@ -28,14 +23,13 @@ def is_admin():
 import webbrowser
 from utils.config import ConfigManager
 
-# ... imports ...
-
 class App(ctk.CTk):
     def __init__(self, start_minimized=False):
         super().__init__()
         
-        self.title("GoodbyeDPI-Turkey GUI")
-        self.geometry("450x550")
+        self.title("GoodbyeDPI Turkey")
+        self.geometry("480x650")
+        self.minsize(390, 480)
         
         # Initialize Config
         self.config_manager = ConfigManager()
@@ -47,7 +41,7 @@ class App(ctk.CTk):
             print(f"Failed to set icon: {e}")
 
         # Modern Styling config
-        ctk.set_appearance_mode("Dark")
+        ctk.set_appearance_mode(self.config_manager.get("theme"))
         ctk.set_default_color_theme("blue")
         
         self.runner = DNSRunner(os.path.dirname(os.path.abspath(__file__)), self.log_message)
@@ -59,6 +53,7 @@ class App(ctk.CTk):
 
         self.create_widgets()
         self.after(50, self._process_ui_events)
+        self.after(1000, self._poll_process)
         
         # Override window close event
         self.protocol('WM_DELETE_WINDOW', self.hide_window)
@@ -72,98 +67,134 @@ class App(ctk.CTk):
             self.log_message("Started automatically via startup.")
 
     def create_widgets(self):
+        self.configure(fg_color=COLORS["background"])
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(5, weight=1) # Log area expands
+        self.grid_rowconfigure(0, weight=1)
+        content = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        content.grid(row=0, column=0, sticky="nsew")
+        content.grid_columnconfigure(0, weight=1)
 
-        # --- Header ---
-        self.header_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.header_frame.grid(row=0, column=0, pady=(20, 10), padx=20, sticky="ew")
-        
-        # Column 0: Empty (spacer) or Logo, Column 1: Status, Column 2: Info Button
-        self.header_frame.grid_columnconfigure(0, weight=1)
-        self.header_frame.grid_columnconfigure(1, weight=2) # Center status
-        self.header_frame.grid_columnconfigure(2, weight=0) # Right align button
-        
-        self.status_label = ctk.CTkLabel(self.header_frame, text="Status: STOPPED", 
-                                       font=("Roboto Medium", 20),
-                                       text_color="#FF5555") 
-        self.status_label.grid(row=0, column=1)
+        header = ctk.CTkFrame(content, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=SPACE["lg"], pady=(SPACE["lg"], SPACE["md"]))
+        header.grid_columnconfigure(1, weight=1)
+        self.header_icon = ctk.CTkImage(light_image=create_icon(128), dark_image=create_icon(128), size=(40, 40))
+        ctk.CTkLabel(header, text="", image=self.header_icon, width=40).grid(row=0, column=0, rowspan=2, padx=(0, 12))
+        ctk.CTkLabel(header, text="GoodbyeDPI Turkey", font=(FONT, 20, "bold"),
+                     text_color=COLORS["text"]).grid(row=0, column=1, sticky="sw")
+        ctk.CTkLabel(header, text="Network protection", font=(FONT, 12),
+                     text_color=COLORS["muted"]).grid(row=1, column=1, sticky="nw")
+        ctk.CTkButton(header, text="About", width=56, height=32, corner_radius=RADIUS["control"],
+                      fg_color="transparent", hover_color=COLORS["surface_alt"],
+                      text_color=COLORS["accent"], command=self.open_about_window).grid(row=0, column=2, rowspan=2)
 
-        # Info Button (About)
-        self.btn_info = ctk.CTkButton(self.header_frame, text="?", width=30, height=30,
-                                      fg_color="#444", hover_color="#666",
-                                      command=self.open_about_window)
-        self.btn_info.grid(row=0, column=2, sticky="e")
+        protection = self._card(content, 1)
+        ctk.CTkLabel(protection, text="PROTECTION", font=(FONT, 11, "bold"),
+                     text_color=COLORS["muted"]).grid(row=0, column=0, sticky="w")
+        status_row = ctk.CTkFrame(protection, fg_color="transparent")
+        status_row.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.status_dot = ctk.CTkLabel(status_row, text="●", width=24, font=(FONT, 19),
+                                      text_color=COLORS["muted"])
+        self.status_dot.pack(side="left")
+        self.status_label = ctk.CTkLabel(status_row, text="Not protected", font=(FONT, 23, "bold"),
+                                         text_color=COLORS["text"])
+        self.status_label.pack(side="left", padx=(4, 0))
+        self.status_detail = ctk.CTkLabel(protection, text="Protection is off.", font=(FONT, 12),
+                                          text_color=COLORS["muted"], anchor="w", justify="left",
+                                          wraplength=390)
+        self.status_detail.grid(row=2, column=0, sticky="ew", pady=(0, 16))
+        self.primary_button = ctk.CTkButton(
+            protection, text="ACTIVATE", height=44, corner_radius=RADIUS["control"],
+            fg_color=COLORS["accent"], hover_color=COLORS["accent_hover"],
+            text_color=COLORS["accent_text"], font=(FONT, 13, "bold"),
+            command=self.start_service)
+        self.primary_button.grid(row=3, column=0, sticky="ew")
 
-        self.status_circle = ctk.CTkProgressBar(self, width=200, height=10)
-        self.status_circle.set(0)
-        self.status_circle.grid(row=1, column=0, pady=(0, 20))
-
-        # --- Settings Area ---
-        self.settings_frame = ctk.CTkFrame(self)
-        self.settings_frame.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
-        self.settings_frame.grid_columnconfigure(1, weight=1)
-
-        # DNS Selection
-        ctk.CTkLabel(self.settings_frame, text="DNS Provider:").grid(row=0, column=0, padx=10, pady=10, sticky="w")
-        
+        dns = self._card(content, 2)
+        ctk.CTkLabel(dns, text="DNS Provider", font=(FONT, 15, "bold"),
+                     text_color=COLORS["text"]).grid(row=0, column=0, sticky="w", pady=(0, 10))
         self.dns_options = {
             "Turkey DNSRedir": ("77.88.8.8", "1253"),
             "Yandex (Standard)": ("77.88.8.8", "1253"),
             "Google": ("8.8.8.8", "53"),
             "Cloudflare": ("1.1.1.1", "53"),
-            "OpenDNS": ("208.67.222.222", "53")
+            "OpenDNS": ("208.67.222.222", "53"),
         }
-        
-        # Load saved preference
         saved_dns = self.config_manager.get("dns_provider")
         if saved_dns not in self.dns_options:
             saved_dns = "Turkey DNSRedir"
-
         self.dns_var = ctk.StringVar(value=saved_dns)
-        self.dns_menu = ctk.CTkOptionMenu(self.settings_frame, 
-                                        variable=self.dns_var,
-                                        values=list(self.dns_options.keys()),
-                                        command=self.save_dns_preference)
-        self.dns_menu.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
+        self.dns_menu = ctk.CTkOptionMenu(
+            dns, variable=self.dns_var, values=list(self.dns_options),
+            command=self.save_dns_preference, height=38,
+            fg_color=COLORS["surface_alt"], button_color=COLORS["surface_alt"],
+            button_hover_color=COLORS["border"], text_color=COLORS["text"],
+            dropdown_fg_color=COLORS["surface"], dropdown_text_color=COLORS["text"])
+        self.dns_menu.grid(row=1, column=0, sticky="ew")
+        if os.name != "nt":
+            ctk.CTkLabel(dns, text="Linux uses a local proxy at 127.0.0.1:8080. Configure your browser to use it.",
+                         font=(FONT, 11), text_color=COLORS["muted"], anchor="w",
+                         justify="left", wraplength=390).grid(row=2, column=0, sticky="ew", pady=(10, 0))
 
-        # Startup Switch
+        preferences = self._card(content, 3)
+        ctk.CTkLabel(preferences, text="Preferences", font=(FONT, 15, "bold"),
+                     text_color=COLORS["text"]).grid(row=0, column=0, sticky="w", pady=(0, 10))
         self.startup_var = ctk.BooleanVar(value=False)
-        self.startup_switch = ctk.CTkSwitch(self.settings_frame, text="Run on Startup", 
-                                          command=self.toggle_startup,
-                                          variable=self.startup_var)
-        self.startup_switch.grid(row=1, column=0, columnspan=2, padx=10, pady=10)
+        self.startup_switch = ctk.CTkSwitch(
+            preferences, text="Run on startup", variable=self.startup_var,
+            command=self.toggle_startup, font=(FONT, 13), text_color=COLORS["text"],
+            progress_color=COLORS["accent"])
+        self.startup_switch.grid(row=1, column=0, sticky="w", pady=(0, 12))
+        theme_row = ctk.CTkFrame(preferences, fg_color="transparent")
+        theme_row.grid(row=2, column=0, sticky="ew")
+        theme_row.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(theme_row, text="Appearance", font=(FONT, 13),
+                     text_color=COLORS["text"]).grid(row=0, column=0, sticky="w")
+        self.theme_var = ctk.StringVar(value=self.config_manager.get("theme"))
+        ctk.CTkOptionMenu(theme_row, variable=self.theme_var, values=["System", "Light", "Dark"],
+                          command=self.save_theme_preference, width=110,
+                          fg_color=COLORS["surface_alt"], button_color=COLORS["surface_alt"],
+                          button_hover_color=COLORS["border"], text_color=COLORS["text"]).grid(row=0, column=1)
 
-        # --- Action Buttons ---
-        self.btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.btn_frame.grid(row=3, column=0, pady=10)
+        activity = self._card(content, 4)
+        self.activity_button = ctk.CTkButton(activity, text="Activity  ▾", anchor="w", height=30,
+                                             font=(FONT, 14, "bold"), fg_color="transparent",
+                                             hover_color=COLORS["surface_alt"],
+                                             text_color=COLORS["text"], command=self.toggle_activity)
+        self.activity_button.grid(row=0, column=0, sticky="ew")
+        self.log_textbox = ctk.CTkTextbox(activity, height=135, font=("Consolas" if os.name == "nt" else "monospace", 11),
+                                          fg_color=COLORS["surface_alt"], text_color=COLORS["text"])
+        self.log_textbox.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.log_textbox.grid_remove()
+        self.activity_open = False
 
-        self.btn_start = ctk.CTkButton(self.btn_frame, text="ACTIVATE", 
-                                     command=self.start_service,
-                                     width=150, height=40,
-                                     fg_color="#00C853", hover_color="#009624")
-        self.btn_start.pack(side="left", padx=10)
+        footer = ctk.CTkLabel(content, text="GitHub  ·  MacallanTheRoot", font=(FONT, 11),
+                              text_color=COLORS["muted"], cursor="hand2")
+        footer.grid(row=5, column=0, pady=(8, SPACE["lg"]))
+        footer.bind("<Button-1>", lambda _event: webbrowser.open("https://github.com/MacallanTheRoot/GoodbyeDPI-Turkey-GUI"))
 
-        self.btn_stop = ctk.CTkButton(self.btn_frame, text="DEACTIVATE", 
-                                    command=self.stop_service,
-                                    state="disabled",
-                                    width=150, height=40,
-                                    fg_color="#D50000", hover_color="#B71C1C")
-        self.btn_stop.pack(side="left", padx=10)
+    def _card(self, parent, row):
+        card = ctk.CTkFrame(parent, fg_color=COLORS["surface"], corner_radius=RADIUS["card"],
+                            border_width=1, border_color=COLORS["border"])
+        card.grid(row=row, column=0, sticky="ew", padx=SPACE["lg"], pady=(0, SPACE["md"]))
+        card.grid_columnconfigure(0, weight=1)
+        # Internal padding stays on children by using a nested content frame.
+        inner = ctk.CTkFrame(card, fg_color="transparent")
+        inner.grid(row=0, column=0, sticky="ew", padx=SPACE["md"], pady=SPACE["md"])
+        inner.grid_columnconfigure(0, weight=1)
+        return inner
 
-        # --- Logs ---
-        ctk.CTkLabel(self, text="Logs:", font=("Arial", 12)).grid(row=4, column=0, padx=20, sticky="w")
-        
-        self.log_textbox = ctk.CTkTextbox(self, font=("Consolas", 10))
-        self.log_textbox.grid(row=5, column=0, padx=20, pady=(0, 20), sticky="nsew")
+    def toggle_activity(self):
+        self.activity_open = not self.activity_open
+        if self.activity_open:
+            self.log_textbox.grid()
+            self.activity_button.configure(text="Activity  ▴")
+        else:
+            self.log_textbox.grid_remove()
+            self.activity_button.configure(text="Activity  ▾")
 
-        # --- Footer ---
-        self.footer_label = ctk.CTkLabel(self, text="Developed by MacallanTheRoot", 
-                                       font=("Arial", 11), text_color="gray", cursor="hand2")
-        self.footer_label.grid(row=6, column=0, pady=(0, 10))
-        self.footer_label.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/MacallanTheRoot"))
-        self.footer_label.bind("<Enter>", lambda e: self.footer_label.configure(text_color="#3B8ED0"))
-        self.footer_label.bind("<Leave>", lambda e: self.footer_label.configure(text_color="gray"))
+    def save_theme_preference(self, choice):
+        ctk.set_appearance_mode(choice)
+        self.config_manager.save_config("theme", choice)
 
     def save_dns_preference(self, choice):
         self.config_manager.save_config("dns_provider", choice)
@@ -174,22 +205,20 @@ class App(ctk.CTk):
         about.geometry("300x250")
         about.grab_set() # Modal
         
-        ctk.CTkLabel(about, text="GoodbyeDPI-Turkey GUI", font=("Roboto Medium", 16)).pack(pady=(20, 5))
-        ctk.CTkLabel(about, text="v1.0.0", font=("Arial", 12), text_color="gray").pack()
+        ctk.CTkLabel(about, text="GoodbyeDPI Turkey", font=(FONT, 16, "bold")).pack(pady=(20, 5))
+        ctk.CTkLabel(about, text="v1.0.0", font=(FONT, 12), text_color=COLORS["muted"]).pack()
         
         ctk.CTkLabel(about, text="A secure & private DNS solution.\nDeveloped by MacallanTheRoot", 
-                     wraplength=250, justify="center").pack(pady=20)
+                     wraplength=250, justify="center", font=(FONT, 12)).pack(pady=20)
         
         def open_github():
             webbrowser.open("https://github.com/MacallanTheRoot")
             
-        link = ctk.CTkLabel(about, text="Visit GitHub", text_color="#3B8ED0", cursor="hand2")
+        link = ctk.CTkLabel(about, text="Visit GitHub", text_color=COLORS["accent"], cursor="hand2")
         link.pack()
         link.bind("<Button-1>", lambda e: open_github())
 
         ctk.CTkButton(about, text="Close", command=about.destroy, width=100).pack(pady=20)
-
-    # ... rest of methods (start_service, stop_service, etc) unchanged ...
 
     def start_service(self):
         if self._shutting_down or self.is_running:
@@ -204,6 +233,7 @@ class App(ctk.CTk):
             self.update_status(True)
         except Exception as e:
             self.log_message(f"Error starting: {e}")
+            self.status_detail.configure(text=str(e))
 
     def stop_service(self):
         if self._shutting_down:
@@ -216,19 +246,28 @@ class App(ctk.CTk):
 
     def update_status(self, running):
         if running:
-            self.status_label.configure(text="Status: SECURE", text_color="#00E676")
-            self.btn_start.configure(state="disabled")
-            self.btn_stop.configure(state="normal")
-            self.status_circle.configure(progress_color="#00E676")
-            self.status_circle.set(1)
+            self.status_label.configure(text="Protected")
+            self.status_dot.configure(text_color=COLORS["success"])
+            self.status_detail.configure(text="Protection is active." if os.name == "nt" else
+                                         "Local proxy active. Use 127.0.0.1:8080 in your browser.")
+            self.primary_button.configure(text="DEACTIVATE", command=self.stop_service)
             self.dns_menu.configure(state="disabled")
         else:
-            self.status_label.configure(text="Status: STOPPED", text_color="#FF5555")
-            self.btn_start.configure(state="normal")
-            self.btn_stop.configure(state="disabled")
-            self.status_circle.configure(progress_color="gray")
-            self.status_circle.set(0)
+            self.status_label.configure(text="Not protected")
+            self.status_dot.configure(text_color=COLORS["muted"])
+            self.status_detail.configure(text="Protection is off.")
+            self.primary_button.configure(text="ACTIVATE", command=self.start_service)
             self.dns_menu.configure(state="normal")
+
+    def _poll_process(self):
+        if self._shutting_down:
+            return
+        if self.is_running and self.runner.process and self.runner.process.poll() is not None:
+            self.runner.stop()
+            self.is_running = False
+            self.update_status(False)
+            self.status_detail.configure(text="The engine exited. Open Activity for details.")
+        self.after(1000, self._poll_process)
 
     def log_message(self, message):
         self._ui_events.put(("log", message))
@@ -278,8 +317,7 @@ class App(ctk.CTk):
         if self._shutting_down:
             return
         self._shutting_down = True
-        self.btn_start.configure(state="disabled")
-        self.btn_stop.configure(state="disabled")
+        self.primary_button.configure(state="disabled")
         self.dns_menu.configure(state="disabled")
         self.startup_switch.configure(state="disabled")
         try:
@@ -292,7 +330,7 @@ class App(ctk.CTk):
                 self.tray_thread.join(timeout=2)
             self.destroy()
 
-    # --- Startup Logic (Shortcut based) ---
+    # --- User-level autostart ---
     def get_startup_path(self):
         return str(startup.startup_path())
 
@@ -319,14 +357,15 @@ if __name__ == "__main__":
         else:
             # Re-run the program with admin rights
             # Preserving args is important
-            script = os.path.abspath(sys.argv[0])
-            params = ' '.join([script] + sys.argv[1:])
+            arguments = sys.argv[1:] if getattr(sys, "frozen", False) else [os.path.abspath(sys.argv[0]), *sys.argv[1:]]
+            params = subprocess.list2cmdline(arguments)
             try:
-                ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+                result = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+                if result <= 32:
+                    raise OSError(f"Elevation was declined or failed ({result})")
                 sys.exit(0)
             except Exception as e:
                 print(f"Failed to elevate privileges: {e}")
-                input("Press Enter to exit...")
     else:
         app = App(start_minimized=start_minimized)
         app.mainloop()
